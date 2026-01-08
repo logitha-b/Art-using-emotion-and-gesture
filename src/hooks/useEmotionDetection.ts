@@ -5,9 +5,10 @@ import type { Emotion } from '@/types/gesture';
 interface UseEmotionDetectionOptions {
   videoRef: React.RefObject<HTMLVideoElement>;
   onEmotionChange?: (emotion: Emotion) => void;
+  enabled?: boolean;
 }
 
-export function useEmotionDetection({ videoRef, onEmotionChange }: UseEmotionDetectionOptions) {
+export function useEmotionDetection({ videoRef, onEmotionChange, enabled = false }: UseEmotionDetectionOptions) {
   const [emotion, setEmotion] = useState<Emotion>('neutral');
   const [isLoading, setIsLoading] = useState(true);
   const [modelsLoaded, setModelsLoaded] = useState(false);
@@ -55,7 +56,7 @@ export function useEmotionDetection({ videoRef, onEmotionChange }: UseEmotionDet
   }, []);
 
   const detectEmotion = useCallback(async () => {
-    if (!videoRef.current || !modelsLoaded) return;
+    if (!videoRef.current || !modelsLoaded || videoRef.current.readyState < 2) return;
 
     try {
       const detections = await faceapi
@@ -75,11 +76,13 @@ export function useEmotionDetection({ videoRef, onEmotionChange }: UseEmotionDet
   }, [videoRef, modelsLoaded, emotion, mapExpressionToEmotion, onEmotionChange]);
 
   useEffect(() => {
-    loadModels();
-  }, [loadModels]);
+    if (enabled) {
+      loadModels();
+    }
+  }, [loadModels, enabled]);
 
   useEffect(() => {
-    if (!modelsLoaded || !videoRef.current) return;
+    if (!modelsLoaded || !videoRef.current || !enabled) return;
 
     // Run detection every 200ms for smooth updates
     intervalRef.current = setInterval(detectEmotion, 200);
@@ -89,7 +92,7 @@ export function useEmotionDetection({ videoRef, onEmotionChange }: UseEmotionDet
         clearInterval(intervalRef.current);
       }
     };
-  }, [modelsLoaded, videoRef, detectEmotion]);
+  }, [modelsLoaded, videoRef, detectEmotion, enabled]);
 
   return { emotion, isLoading };
 }

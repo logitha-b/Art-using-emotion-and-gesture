@@ -7,9 +7,10 @@ interface UseHandGestureOptions {
   videoRef: React.RefObject<HTMLVideoElement>;
   onGestureChange?: (gesture: Gesture) => void;
   onDrawPoint?: (point: Point) => void;
+  enabled?: boolean;
 }
 
-export function useHandGesture({ videoRef, onGestureChange, onDrawPoint }: UseHandGestureOptions) {
+export function useHandGesture({ videoRef, onGestureChange, onDrawPoint, enabled = false }: UseHandGestureOptions) {
   const [gesture, setGesture] = useState<Gesture>('none');
   const [isLoading, setIsLoading] = useState(true);
   const handsRef = useRef<Hands | null>(null);
@@ -33,9 +34,6 @@ export function useHandGesture({ videoRef, onGestureChange, onDrawPoint }: UseHa
 
     const [indexExtended, middleExtended, ringExtended, pinkyExtended] = fingersExtended;
     
-    // Check thumb (different logic - horizontal comparison)
-    const thumbExtended = hand[4].x < hand[3].x;
-
     // Fist: no fingers extended
     if (!indexExtended && !middleExtended && !ringExtended && !pinkyExtended) {
       return 'clear';
@@ -88,7 +86,10 @@ export function useHandGesture({ videoRef, onGestureChange, onDrawPoint }: UseHa
   }, [detectGesture, gesture, onGestureChange, onDrawPoint]);
 
   useEffect(() => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || !enabled) {
+      setIsLoading(false);
+      return;
+    }
 
     const hands = new Hands({
       locateFile: (file) => {
@@ -106,27 +107,45 @@ export function useHandGesture({ videoRef, onGestureChange, onDrawPoint }: UseHa
     hands.onResults(onResults);
     handsRef.current = hands;
 
-    const camera = new Camera(videoRef.current, {
-      onFrame: async () => {
-        if (videoRef.current && handsRef.current) {
-          await handsRef.current.send({ image: videoRef.current });
+    // Use requestAnimationFrame loop instead of Camera utility
+    let animationId: number;
+    let isProcessing = false;
+
+    const processFrame = async () => {
+      if (videoRef.current && handsRef.current && videoRef.current.readyState >= 2) {
+        if (!isProcessing) {
+          isProcessing = true;
+          try {
+            await handsRef.current.send({ image: videoRef.current });
+          } catch (e) {
+            console.error('Hand tracking error:', e);
+          }
+          isProcessing = false;
         }
-      },
-      width: 640,
-      height: 480,
-    });
+      }
+      animationId = requestAnimationFrame(processFrame);
+    };
 
-    camera.start().then(() => {
-      setIsLoading(false);
-    });
+    // Wait for video to be ready
+    const startProcessing = () => {
+      if (videoRef.current?.readyState >= 2) {
+        setIsLoading(false);
+        processFrame();
+      } else {
+        videoRef.current?.addEventListener('loadeddata', () => {
+          setIsLoading(false);
+          processFrame();
+        }, { once: true });
+      }
+    };
 
-    cameraRef.current = camera;
+    startProcessing();
 
     return () => {
-      camera.stop();
+      cancelAnimationFrame(animationId);
       hands.close();
     };
-  }, [videoRef, onResults]);
+  }, [videoRef, onResults, enabled]);
 
   return { gesture, isLoading };
 }
