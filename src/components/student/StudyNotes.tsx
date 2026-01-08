@@ -1,13 +1,14 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { BookOpen, Sparkles, FileText, CreditCard, HelpCircle, Loader2 } from 'lucide-react';
+import { BookOpen, Sparkles, FileText, CreditCard, HelpCircle, Loader2, Upload, X } from 'lucide-react';
 import type { AIMode, Flashcard, QuizQuestion } from '@/types/notes';
 import FlashcardViewer from './FlashcardViewer';
 import QuizViewer from './QuizViewer';
 import { useToast } from '@/hooks/use-toast';
+import { extractTextFromPDF } from '@/lib/pdfParser';
 
 export default function StudyNotes() {
   const [content, setContent] = useState('');
@@ -15,14 +16,83 @@ export default function StudyNotes() {
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [quiz, setQuiz] = useState<QuizQuestion[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isParsing, setIsParsing] = useState(false);
   const [activeMode, setActiveMode] = useState<AIMode | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.type !== 'application/pdf') {
+      toast({
+        title: 'Invalid file type',
+        description: 'Please upload a PDF file.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      toast({
+        title: 'File too large',
+        description: 'Please upload a PDF under 10MB.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsParsing(true);
+    setUploadedFile(file.name);
+
+    try {
+      const text = await extractTextFromPDF(file);
+      
+      if (!text.trim()) {
+        toast({
+          title: 'No text found',
+          description: 'The PDF appears to be empty or contains only images.',
+          variant: 'destructive',
+        });
+        setUploadedFile(null);
+      } else {
+        setContent(text);
+        toast({
+          title: 'PDF loaded!',
+          description: `Extracted ${text.length.toLocaleString()} characters from "${file.name}"`,
+        });
+      }
+    } catch (error) {
+      console.error('PDF parsing error:', error);
+      toast({
+        title: 'Failed to parse PDF',
+        description: 'Could not extract text from the PDF file.',
+        variant: 'destructive',
+      });
+      setUploadedFile(null);
+    } finally {
+      setIsParsing(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const clearFile = () => {
+    setUploadedFile(null);
+    setContent('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
 
   const generateContent = async (mode: AIMode) => {
     if (!content.trim()) {
       toast({
         title: 'No content',
-        description: 'Please paste or type some study material first.',
+        description: 'Please upload a PDF or paste study material first.',
         variant: 'destructive',
       });
       return;
@@ -40,7 +110,7 @@ export default function StudyNotes() {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
           },
-          body: JSON.stringify({ content, mode }),
+          body: JSON.stringify({ content: content.slice(0, 15000), mode }),
         }
       );
 
@@ -88,7 +158,7 @@ export default function StudyNotes() {
         </div>
         <div>
           <h2 className="text-xl font-bold text-foreground">AI Study Notes</h2>
-          <p className="text-sm text-muted-foreground">Paste your notes to generate summaries, flashcards & quizzes</p>
+          <p className="text-sm text-muted-foreground">Upload a PDF or paste notes to generate summaries, flashcards & quizzes</p>
         </div>
       </header>
 
@@ -96,22 +166,69 @@ export default function StudyNotes() {
         {/* Input Section */}
         <Card className="flex flex-col">
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <FileText className="w-4 h-4" />
-              Study Material
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <FileText className="w-4 h-4" />
+                Study Material
+              </span>
+              {uploadedFile && (
+                <span className="flex items-center gap-2 text-xs font-normal text-muted-foreground bg-secondary px-2 py-1 rounded">
+                  📄 {uploadedFile}
+                  <button onClick={clearFile} className="hover:text-foreground">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="flex-1 flex flex-col gap-4">
+            {/* Upload Area */}
+            <div className="relative">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf"
+                onChange={handleFileUpload}
+                className="hidden"
+                id="pdf-upload"
+              />
+              <label
+                htmlFor="pdf-upload"
+                className="flex items-center justify-center gap-3 p-4 border-2 border-dashed border-border rounded-lg cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-colors"
+              >
+                {isParsing ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                    <span className="text-sm text-muted-foreground">Extracting text from PDF...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">
+                      <span className="text-primary font-medium">Upload PDF</span> or drag and drop
+                    </span>
+                  </>
+                )}
+              </label>
+            </div>
+
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <div className="flex-1 h-px bg-border" />
+              <span>or paste text below</span>
+              <div className="flex-1 h-px bg-border" />
+            </div>
+
             <Textarea
               placeholder="Paste your study notes, textbook content, or any learning material here..."
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              className="flex-1 min-h-[200px] resize-none"
+              className="flex-1 min-h-[150px] resize-none"
             />
+            
             <div className="flex flex-wrap gap-2">
               <Button
                 onClick={() => generateContent('summary')}
-                disabled={isLoading}
+                disabled={isLoading || isParsing}
                 variant="outline"
                 className="gap-2"
               >
@@ -124,7 +241,7 @@ export default function StudyNotes() {
               </Button>
               <Button
                 onClick={() => generateContent('flashcards')}
-                disabled={isLoading}
+                disabled={isLoading || isParsing}
                 variant="outline"
                 className="gap-2"
               >
@@ -137,7 +254,7 @@ export default function StudyNotes() {
               </Button>
               <Button
                 onClick={() => generateContent('quiz')}
-                disabled={isLoading}
+                disabled={isLoading || isParsing}
                 variant="outline"
                 className="gap-2"
               >
