@@ -1,7 +1,7 @@
-import GestureDrawingApp from '@/components/GestureDrawingApp';
+import StudentApp from '@/components/student/StudentApp';
 
 const Index = () => {
-  return <GestureDrawingApp />;
+  return <StudentApp />;
 };
 
 export default Index;
